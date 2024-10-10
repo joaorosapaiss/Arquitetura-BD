@@ -5,7 +5,7 @@ Este projeto visa a implementação de um sistema de base de dados relacional pa
 ---
 
 ## 🔗 Modelo Físico
-![Modelo Físico](Modelo_Fisico.png)
+[![Modelo Físico](Modelo_Fisico.png)](Modelo_Fisico.pdf)
 
 ---
 
