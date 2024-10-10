@@ -1,0 +1,342 @@
+Meta 2 - Views
+
+
+-- Alinea a)
+create or replace view VIEW_A as 
+select pt.id_pedido,
+  r.data_recolha,
+  pt.id_armazem_recolha,
+  pt.id_armazem_entrega,
+  te.descricao 
+from pedido_transporte pt
+join recolha r on pt.id_pedido = r.pedido_trans_id_pedido
+join estado e on pt.id_pedido = e.pedido_trans_id_pedido
+join tipo_estado te on e.tipo_estado_id_tipo_est = te.id_tipo_estado
+where trunc(r.data_recolha) = trunc(sysdate) - 1 
+and pt.id_armazem_recolha = obtem_armazem_atual(pt.id_pedido) -- DEVOLVE O ARMAZEM ONDE O PEDIDO SE ENCONTRA
+and e.id_estado = obtem_id_estado_atual(pt.id_pedido)  -- DEVOLVE ID ESTADO EM QUE O PEDIDO SE ENCONTRA
+and te.id_tipo_estado = obtem_id_tipo_estado('em_armazem') -- FUNCAO DEVOLVE ID_TIPO_ESTADO PASSADO
+and lower(tipo_serv_id_tserv) <> 'urgente'
+and tipo_merc_id_tpmerc = obtem_id_tp_mercadoria('grandes_eletrodomesticos')
+order by r.data_recolha;
+/
+
+
+
+-- Alinea b)
+create or replace view VIEW_B as 
+select v.id_viagem "IDVIAGEM", 
+  v.veiculo_id_veic "IDVEICULO",
+  t.descricao "TROCO",
+  p.datahora_inicio "PARTIDA", 
+  c.datahora_fim "CHEGADA", 
+  round(to_number(c.datahora_fim - p.datahora_inicio) * 24 * 60) "DURACAO", -- * 24 * 60 PARA MINUTOS
+  v.total_kms "KMSPERCORRIDOS"
+from pedido_transporte pt
+join viagem__pedido_transporte vpt on pt.id_pedido = vpt.pedido_trans_id_pedido
+join viagem v on vpt.viagem__id_viagem = v.id_viagem
+join troco t on v.troco_id_troco = t.id_troco
+join partida p on v.id_viagem = p.viagem__id_viagem
+join chegada c on v.id_viagem = c.viagem__id_viagem
+where pt.id_pedido = 2023041105
+order by p.datahora_inicio;
+/
+
+
+
+-- Alinea c)
+create or replace view VIEW_C as 
+select pt.id_pedido "IDPEDIDO",
+  pt.tipo_serv_id_tserv "TIPOSERVICO",
+  pt.data_registo "DATAPEDIDO",
+  r.data_recolha "DATARECOLHA",
+  em.datahora "DATAENTRADA",
+  round(to_number(pt.data_limite - sysdate) * 24 * 60) as TEMPORESTANTE
+from pedido_transporte pt
+join recolha r on pt.id_pedido = r.pedido_trans_id_pedido
+join em_armazem em on pt.id_pedido = em.pedido_trans_id_pedido
+where em.armazem_id_armazem = obtem_armazem_atual(pt.id_pedido)
+and em.armazem_id_armazem = 'SANTAREM ARM01' 
+and trunc(r.data_recolha, 'ww') = trunc(sysdate, 'ww') - 1 -- VERIFICA FOI NA SEMANA ANTERIOR
+order by TEMPORESTANTE;
+
+
+
+-- Alinea d)
+create or replace view VIEW_D as
+select em.armazem_id_armazem "ARMAZEM", 
+  pt.id_pedido "IDPEDIDO",
+  upper(pt.tipo_serv_id_tserv) "TIPOSERVICO",
+  pt.data_registo "DATAPEDIDO",
+  em.datahora "DATAENTRADA",
+  round(to_number(pt.data_limite - sysdate) * 24 * 60) as TEMPORESTANTE
+from pedido_transporte pt
+join em_armazem em on pt.id_pedido = em.pedido_trans_id_pedido
+join estado e on pt.id_pedido = e.pedido_trans_id_pedido
+where e.id_estado = obtem_id_estado_atual(pt.id_pedido) -- FILTRAR PARA ESTADO ATUAL
+and e.tipo_estado_id_tipo_est = obtem_id_tipo_estado('em_armazem') -- VERIFICAR O ESTADO PRETENDIDO
+and em.datahora = (select min(datahora) from em_armazem -- IDENTIFICAR O QUE ESTA HA MAIS TEMPO
+                    where armazem_id_armazem = em.armazem_id_armazem)
+order by TEMPORESTANTE;
+/
+
+
+-- Aliena e)
+create or replace view VIEW_E as 
+select em.armazem_id_armazem as id_arm, 
+  obtem_descricao_tpmerc(pt.tipo_merc_id_tpmerc) as tpmerc,
+  round(sum(pt.volume_pedido)/24, 3) as volume_total -- / 24 MESES (2 ANOS M�DIA)
+from pedido_transporte pt
+join em_armazem em on em.pedido_trans_id_pedido = pt.id_pedido
+where to_char(em.datahora, 'yyyy') in ('2021', '2022') -- VERIFICA OS ANOS DA DATA
+and to_char(em.datahora, 'dd hh24:mi:ss') = '01 00:00:00' -- PRIMERIO DIA AS 00:00
+and upper(em.armazem_id_armazem) = 'COIMBRA%' -- FILTRAR PARA ARMAZENS DE COIMBRA
+group by em.armazem_id_armazem, pt.tipo_merc_id_tpmerc;
+
+
+
+-- Alinea f)
+create or replace view VIEW_F as
+with dados_armazem as ( -- OBTER A TAXA DE OCUPACAO DE CADA ARMAZEM 
+  select 
+    id_armazem,
+    1 - (cap_disponivel / cap_total) * 100 as taxa_ocupacao
+  from armazem 
+), 
+arm_maior_ocupacao as ( -- OBTER ARMAZEM QUE TEM A MAIOR TAXA DE OCUPACAO 
+  select
+    id_armazem,
+    taxa_ocupacao as taxa_maior_ocupacao 
+  from dados_armazem
+  where taxa_ocupacao = (select max(taxa_ocupacao) from dados_armazem)
+),
+pedidos_temp as ( -- SELECIONAR PEDIDOS ARMAZENADOS TEMPORARIAMENTE
+  select 
+    pt.id_pedido as id_pedido,
+    pt.volume_pedido as volume_pedido,
+    pt.data_limite,
+    em.armazem_id_armazem
+  from pedido_transporte pt
+  join em_armazem em on em.pedido_trans_id_pedido = pt.id_pedido
+  join arm_maior_ocupacao mo on mo.id_armazem = em.armazem_id_armazem
+  where em.armazem_id_armazem = obtem_armazem_atual(pt.id_pedido)
+)
+select mo.id_armazem "ARMAZEM",
+  round(mo.taxa_maior_ocupacao, 1) "TAXAOCUPACAO",
+  count(pt.id_pedido) "NPEDIDOSTRANSPORTE",
+  sum(pt.volume_pedido) "VOLUME_PEDIDOS",
+  round(avg(to_number(pt.data_limite - sysdate)), 1) "MEDIA_TEMPORESTANTE"
+from arm_maior_ocupacao mo
+join pedidos_temp pt on pt.armazem_id_armazem = mo.id_armazem
+group by mo.id_armazem, mo.taxa_maior_ocupacao;
+/
+
+
+-- Alinea g)
+create or replace view VIEW_G as
+with transportes_por_cidade as ( -- OBTER OS TRANSPORTES POR TIPO DE MERCADORIA
+  select substr(id_armazem_entrega, 1, instr(id_armazem_entrega, ' ') - 1) as cidade,
+    tipo_merc_id_tpmerc as tpmerc_id,
+    count(*) as num_transportes
+  from pedido_transporte 
+  where to_number(to_char(data_registo, 'yyyy')) = to_number(to_char(sysdate, 'yyyy')) - 1 -- DO ANO PASSADO
+  group by substr(id_armazem_entrega, 1, instr(id_armazem_entrega, ' ') - 1), 
+    tipo_merc_id_tpmerc
+  having n_transportes_tpmercadoria(tipo_merc_id_tpmerc) > 2 -- QUE TENHAM PELO MENOS 3 TRANSPORTES
+) --FUNCAO DA LINHA ACIMA RETORNA O N TRANSPORTES DADO O TIPO DE MERCADORIA
+select tpc.cidade "CIDADE",
+  obtem_descricao_tpmerc(tpc.tpmerc_id) "TIPO_MERCADORIA", -- FUNCAO DEVOLVE A DESCRICAO DADO O ID
+  tpc.num_transportes "N� TRANSPORTES",
+  sum(pt.volume_pedido) as VOLUME_TRANSPORTADO
+from transportes_por_cidade tpc
+join pedido_transporte pt on substr(pt.id_armazem_entrega, 1, instr(pt.id_armazem_entrega, ' ') - 1) = tpc.cidade 
+  and pt.tipo_merc_id_tpmerc = tpc.tpmerc_id
+group by tpc.cidade, obtem_descricao_tpmerc(tpc.tpmerc_id), tpc.num_transportes
+order by VOLUME_TRANSPORTADO desc;
+/
+
+
+
+-- Alinea h)
+create or replace view VIEW_H as 
+select * from (
+  select v.matricula "MATRICULA",
+    v.marca "MARCA",
+    v.modelo "MODELO"
+  from viagem vi
+  join veiculo v on vi.veiculo_id_veic = v.id_veiculo
+  join tipo_mercadoria_viagem tmv on vi.id_viagem = tmv.viagem__id_viagem
+  join tipo_mercadoria tm on tmv.tipo_merc_id_tpmerc = tm.id_tpmercadoria
+  join partida p on vi.id_viagem = p.viagem__id_viagem
+  join chegada c on vi.id_viagem = c.viagem__id_viagem
+  where vi.total_kms > 200
+  and (vi.peso_transp / v.capacidade_tara) * 100 > 80 -- TAXA DE OCPACAO (PESO) SUPERIOR A 80%
+  and lower(tm.descricao) = 'animais_vivos'
+--  and to_number(to_char(p.datahora_inicio, 'mm')) = to_number(to_char(sysdate, 'mm')) - 1
+--  and to_number(to_char(c.datahora_fim, 'mm')) = to_number(to_char(sysdate, 'mm')) - 1
+  and trunc(p.datahora_inicio, 'mm') = trunc(sysdate, 'mm') - 1
+  and trunc(c.datahora_fim, 'mm') = trunc(sysdate, 'mm') - 1 -- REALIZADAS NO MES PASSADO
+  group by v.matricula, v.marca, v.modelo
+  order by count(*) desc
+)
+where rownum <= 5; -- SELECIONA O TOP 5
+/
+
+
+-- Alinea i)
+create or replace view VIEW_I as 
+with viagens_deste_ano as (
+  select 
+    pt.id_armazem_entrega as armazem_id,
+    vpt.pedido_trans_id_pedido as idpedido
+  from viagem__pedido_transporte vpt
+  join pedido_transporte pt on vpt.pedido_trans_id_pedido = pt.id_pedido
+  join viagem v on vpt.viagem__id_viagem = v.id_viagem 
+  join partida p on v.id_viagem = p.viagem__id_viagem
+  where to_char(p.datahora_inicio, 'yyyy') = to_char(sysdate, 'yyyy') -- FILTRA VIAGENS DO ANO ATUAL
+)
+select vda.armazem_id "ARMAZEM",
+  count(*) "No TRANSPORTES",
+  sum(pt.volume_pedido) * 10 as VOLUMETOTAL, --*10 para conversao m->dm
+  sum(pt.peso_pedido) as PESOTOTAL
+from viagens_deste_ano vda
+join pedido_transporte pt on vda.idpedido = pt.id_pedido
+where rownum <= 3 -- FILTRA TOP 3
+group by vda.armazem_id
+order by VOLUMETOTAL;  
+/
+    
+
+-- Alinea j)
+create or replace view VIEW_J as 
+with recolhas_lisboa as ( -- FILTRA AS RECOLHAS POR CIDADE
+  select id_pedido as pedido_id,
+    upper(substr(id_armazem_recolha, 1, instr(id_armazem_recolha, ' ') - 1)) as cidade -- SELECIONA A CIDADE
+  from pedido_transporte
+)
+select rl.cidade as CIDADE,
+  obtem_descricao_tpmerc(rl.pedido_id) as TIPO_MERCADORIA,
+  round(avg(to_number(e.data_entrega - r.data_recolha)*24), 1) as TEMPO_MEDIO -- *24 , DIAS -> HORAS
+from pedido_transporte pt
+join recolhas_lisboa rl on pt.id_pedido = rl.pedido_id
+join recolha r on pt.id_pedido = r.pedido_trans_id_pedido
+join entrega e on pt.id_pedido = e.pedido_trans_id_pedido
+where rl.cidade = 'LISBOA'
+--and to_number(to_char(r.data_recolha, 'ww')) = to_number(to_char(sysdate, 'ww')) - 1
+and trunc(r.data_recolha, 'IW') = trunc(sysdate, 'IW') - 1 -- SEMANA ANTERIOR
+group by rl.cidade, obtem_descricao_tpmerc(rl.pedido_id)
+order by TEMPO_MEDIO;
+/ 
+  
+  
+-- Alinea k)
+create or replace view VIEW_K as 
+with entrega_semana_passada as ( -- OBTEM AS ENTREGAS DA SEMANA PASSADA
+  select substr(pt.id_armazem_recolha, 1, instr(pt.id_armazem_recolha, ' ') - 1) as cidade,
+    pt.tipo_merc_id_tpmerc as id_tpmerc,
+    round(avg(to_number(e.data_entrega - r.data_recolha)*24), 1) as tempo_medio
+  from pedido_transporte pt
+  join recolha r on pt.id_pedido = r.pedido_trans_id_pedido
+  join entrega e on pt.id_pedido = e.pedido_trans_id_pedido
+  where trunc(r.data_recolha, 'IW') = trunc(sysdate, 'IW') - 1 -- -1 SEMANA 
+  group by substr(pt.id_armazem_recolha, 1, instr(pt.id_armazem_recolha, ' ') - 1), pt.tipo_merc_id_tpmerc
+),
+entrega_semana_anterior as ( -- OBTEM AS ENTREGAS DA SEMANA ANTERIOR
+  select substr(pt.id_armazem_recolha, 1, instr(pt.id_armazem_recolha, ' ') - 1) as cidade,
+    pt.tipo_merc_id_tpmerc as id_tpmerc,
+    round(avg(to_number(e.data_entrega - r.data_recolha)*24), 1) as tempo_medio
+  from pedido_transporte pt
+  join recolha r on pt.id_pedido = r.pedido_trans_id_pedido
+  join entrega e on pt.id_pedido = e.pedido_trans_id_pedido
+  where trunc(r.data_recolha, 'IW') = trunc(sysdate, 'IW') - 2 -- -2 SEMANAS
+  group by substr(pt.id_armazem_recolha, 1, instr(pt.id_armazem_recolha, ' ') - 1), pt.tipo_merc_id_tpmerc
+)
+select p.cidade "CIDADE",
+  tm.descricao "TIPO_MERCADORIA",
+  p.tempo_medio "TEMPO_MEDIO",
+  a.tempo_medio "TEMPO_MEDIO_ANTERIOR",
+  round(((p.tempo_medio - a.tempo_medio)/a.tempo_medio) * 100, 1) as VARIACAO -- TAXA DE VARIACAO
+from entrega_semana_passada p
+join tipo_mercadoria tm on p.id_tpmerc = tm.id_tpmercadoria
+join entrega_semana_anterior a on p.cidade = a.cidade and p.id_tpmerc = a.id_tpmerc;
+/
+  
+
+-- Alinea l)
+create or replace view VIEW_L as
+with uma_viagem as ( -- CALCULA MEDIA TEMPOS DE PEDIDOS DE UMA VIAGEM
+  select pt.tipo_merc_id_tpmerc as id_tpmerc,
+    round(avg(calcula_duracao_viagem(vpt.viagem__id_viagem)), 0) as media_um
+  from pedido_transporte pt
+  join viagem__pedido_transporte vpt on vpt.pedido_trans_id_pedido = pt.id_pedido
+  where viagem_concluida(vpt.viagem__id_viagem) = 1 -- VERIFICA SE VIAGEM ESTA CONCLUIDA
+  and conta_viagens_pedido(pt.id_pedido) = 1 -- DEVOLVE O N� DE VIAGENS QUE UM PEDIDO EFETUOU
+  group by pt.tipo_merc_id_tpmerc
+),
+varias_viagens as ( -- CALCULA A MEDIA TEMPOS DE PEDIDOS DE MAIS VIAGENS 
+  select pt.tipo_merc_id_tpmerc as id_tpmerc,
+    round(avg(calcula_duracao_viagem(vpt.viagem__id_viagem)), 0) as media_varias
+  from pedido_transporte pt
+  join viagem__pedido_transporte vpt on vpt.pedido_trans_id_pedido = pt.id_pedido
+  where viagem_concluida(vpt.viagem__id_viagem) = 1  -- VERIFICA SE VIAGEM ESTA CONCLUIDA
+  and conta_viagens_pedido(pt.id_pedido) > 1 -- DEVOLVE O N� DE VIAGENS QUE UM PEDIDO EFETUOU
+  group by pt.tipo_merc_id_tpmerc
+)
+select obtem_descricao_tpmerc(uv.id_tpmerc) as TIPO_MERCADORIA,
+  abs(uv.media_um - vv.media_varias) as DIF_TEMPOS
+from uma_viagem uv
+join varias_viagens vv on uv.id_tpmerc = vv.id_tpmerc;
+/
+
+
+
+
+-- Alinea m)
+-- VIEW PROPOSTA
+-- MOSTRA PARA CADA VEICULO SEUS KMS PERCORRIDOS E MEDIA DE PESO TRANSPORTADO POR VIAGEM
+create or replace view VIEW_M_2020131717 as 
+select 
+  ve.id_veiculo "IDVEICULO",
+  ve.marca "MARCA",
+  ve.modelo "MODELO",
+  ve.matricula "MATRICULA",
+  sum(v.total_kms) as TOTAL_KM_REALIZADOS,
+  avg(v.peso_transp) as MEDIA_PESO_TRANSPORTADO
+from viagem v
+join veiculo ve on ve.id_veiculo = v.veiculo_id_veic
+group by ve.id_veiculo, ve.marca, ve.modelo, ve.matricula;
+
+
+
+-- Alinea n)
+-- VIEW PROPOSTA 
+-- MOSTRA PARA CADA TIPO DE MERCADORIA O TROCO MAIS USADO E O MENOS USADO 
+create or replace view VIEW_N_2020131717 as
+with info_trocos as (
+    -- Subconsulta que calcula o número de vezes utilizado por cada troco e  encontra os máximos e mínimos por tipo_mercadoria
+    select 
+        tm.id_tpmercadoria as id_tpmerc,
+        t.descricao as des_troco,
+        count(tmv.viagem__id_viagem) as nvezes,
+        max(count(tmv.viagem__id_viagem)) over (partition by tm.id_tpmercadoria) as max_nvezes,
+        min(count(tmv.viagem__id_viagem)) over (partition by tm.id_tpmercadoria) as min_nvezes
+    from tipo_mercadoria tm
+    join tipo_mercadoria_viagem tmv on tm.id_tpmercadoria = tmv.tipo_merc_id_tpmerc
+    join viagem v on tmv.viagem__id_viagem = v.id_viagem
+    join troco t on v.troco_id_troco = t.id_troco
+    join chegada c on v.id_viagem = c.viagem__id_viagem
+    where c.datahora_fim >= add_months(sysdate, -24) -- Considera apenas viagens dos últimos 24 meses
+    group by tm.id_tpmercadoria, t.descricao
+)
+select 
+    tc1.id_tpmerc as id_tpmerc,
+    tc1.des_troco as "Troco + Utilizado",
+    tc1.nvezes as "Nº Vezes + Utilizado",
+    tc2.des_troco as "Troco - Utilizado",
+    tc2.nvezes as "Nº Vezes - Utilizado"
+from info_trocos tc1
+join info_trocos tc2 on tc1.id_tpmerc = tc2.id_tpmerc
+where tc1.nvezes = tc1.max_nvezes -- Troco mais utilizado
+  and tc2.nvezes = tc2.min_nvezes -- Troco menos utilizado;
+
+
