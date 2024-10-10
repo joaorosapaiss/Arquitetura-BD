@@ -34,6 +34,4 @@ Embora várias funcionalidades tenham sido implementadas, o projeto ainda não e
 - **Desenvolver mais procedimentos e funções** para automatizar processos como o cálculo da ocupação dos armazéns e das rotas de transporte.
 - **Melhorar a documentação** dos scripts, adicionando comentários mais detalhados para descrever cada componente.
 
----
 
-Este repositório fornece uma base sólida para a construção de um sistema de gestão de transportes. Apesar de não estar completo, já abrange a maior parte das funcionalidades principais indicadas no enunciado.
